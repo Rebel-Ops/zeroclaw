@@ -66,6 +66,9 @@ coverage
 lcov.info
 
 # Application and script directories (not needed for Docker runtime)
-apps/
+apps/*
+!apps/tauri/
+apps/tauri/*
+!apps/tauri/Cargo.toml
 python/
 scripts/
