@@ -39,6 +39,7 @@ pub mod nextcloud_talk;
 pub mod nostr;
 pub mod notion;
 pub mod qq;
+pub mod rebelops;
 pub mod reddit;
 pub mod session_backend;
 pub mod session_sqlite;
@@ -84,6 +85,7 @@ pub use nextcloud_talk::NextcloudTalkChannel;
 pub use nostr::NostrChannel;
 pub use notion::NotionChannel;
 pub use qq::QQChannel;
+pub use rebelops::RebelOpsChannel;
 pub use reddit::RedditChannel;
 pub use signal::SignalChannel;
 pub use slack::SlackChannel;
@@ -428,22 +430,24 @@ impl InFlightTaskCompletion {
 }
 
 fn conversation_memory_key(msg: &traits::ChannelMessage) -> String {
+    let channel_name = canonical_channel_name(&msg.channel);
     // Include thread_ts for per-topic memory isolation in forum groups
     match &msg.thread_ts {
-        Some(tid) => format!("{}_{}_{}_{}", msg.channel, tid, msg.sender, msg.id),
-        None => format!("{}_{}_{}", msg.channel, msg.sender, msg.id),
+        Some(tid) => format!("{}_{}_{}_{}", channel_name, tid, msg.sender, msg.id),
+        None => format!("{}_{}_{}", channel_name, msg.sender, msg.id),
     }
 }
 
 fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
+    let channel_name = canonical_channel_name(&msg.channel);
     // Include reply_target for per-channel isolation (e.g. distinct Discord/Slack
     // channels) and thread_ts for per-topic isolation in forum groups.
     match &msg.thread_ts {
         Some(tid) => format!(
             "{}_{}_{}_{}",
-            msg.channel, msg.reply_target, tid, msg.sender
+            channel_name, msg.reply_target, tid, msg.sender
         ),
-        None => format!("{}_{}_{}", msg.channel, msg.reply_target, msg.sender),
+        None => format!("{}_{}_{}", channel_name, msg.reply_target, msg.sender),
     }
 }
 
@@ -452,13 +456,26 @@ fn followup_thread_id(msg: &traits::ChannelMessage) -> Option<String> {
 }
 
 fn interruption_scope_key(msg: &traits::ChannelMessage) -> String {
+    let channel_name = canonical_channel_name(&msg.channel);
     match &msg.interruption_scope_id {
         Some(scope) => format!(
             "{}_{}_{}_{}",
-            msg.channel, msg.reply_target, msg.sender, scope
+            channel_name, msg.reply_target, msg.sender, scope
         ),
-        None => format!("{}_{}_{}", msg.channel, msg.reply_target, msg.sender),
+        None => format!("{}_{}_{}", channel_name, msg.reply_target, msg.sender),
     }
+}
+
+fn canonical_channel_name(channel_name: &str) -> &str {
+    if channel_name == "rebelops:passive" {
+        "rebelops"
+    } else {
+        channel_name
+    }
+}
+
+fn is_passive_only_message(msg: &traits::ChannelMessage) -> bool {
+    msg.channel == "rebelops:passive"
 }
 
 /// Returns `true` when `content` is a `/stop` command (with optional `@botname` suffix).
@@ -2337,11 +2354,37 @@ async fn process_channel_message(
     if let Err(err) = maybe_apply_runtime_config_update(ctx.as_ref()).await {
         tracing::warn!("Failed to apply runtime config update: {err}");
     }
+    let history_key = conversation_history_key(&msg);
+    if ctx.auto_save_memory
+        && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS
+        && !memory::should_skip_autosave_content(&msg.content)
+    {
+        let autosave_key = conversation_memory_key(&msg);
+        let _ = ctx
+            .memory
+            .store(
+                &autosave_key,
+                &msg.content,
+                crate::memory::MemoryCategory::Conversation,
+                Some(&history_key),
+            )
+            .await;
+    }
+
+    if is_passive_only_message(&msg) {
+        append_sender_turn(ctx.as_ref(), &history_key, ChatMessage::user(&msg.content));
+        tracing::debug!(
+            channel = %msg.channel,
+            sender = %msg.sender,
+            "Passive channel message stored without reply"
+        );
+        return;
+    }
+
     if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
         return;
     }
 
-    let history_key = conversation_history_key(&msg);
     let mut route = get_route_selection(ctx.as_ref(), &history_key);
 
     // ── Query classification: override route when a rule matches ──
@@ -2394,21 +2437,6 @@ async fn process_channel_message(
             return;
         }
     };
-    if ctx.auto_save_memory
-        && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS
-        && !memory::should_skip_autosave_content(&msg.content)
-    {
-        let autosave_key = conversation_memory_key(&msg);
-        let _ = ctx
-            .memory
-            .store(
-                &autosave_key,
-                &msg.content,
-                crate::memory::MemoryCategory::Conversation,
-                Some(&history_key),
-            )
-            .await;
-    }
 
     println!("  ⏳ Processing message...");
     let started_at = Instant::now();
@@ -3985,7 +4013,17 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .with_streaming(sl.stream_drafts, sl.draft_update_interval_ms),
             ))
         }
-        other => anyhow::bail!("Unknown channel '{other}'. Supported: telegram, discord, slack"),
+        "rebelops" => {
+            let rebelops = config
+                .channels_config
+                .rebelops
+                .as_ref()
+                .context("RebelOps channel is not configured")?;
+            Ok(Arc::new(RebelOpsChannel::new(rebelops.clone())))
+        }
+        other => anyhow::bail!(
+            "Unknown channel '{other}'. Supported: telegram, discord, slack, rebelops"
+        ),
     }
 }
 
@@ -4118,6 +4156,13 @@ fn collect_configured_channels(
                 .with_transcription(config.transcription.clone())
                 .with_streaming(sl.stream_drafts, sl.draft_update_interval_ms),
             ),
+        });
+    }
+
+    if let Some(ref rebelops) = config.channels_config.rebelops {
+        channels.push(ConfiguredChannel {
+            display_name: "RebelOps",
+            channel: Arc::new(RebelOpsChannel::new(rebelops.clone())),
         });
     }
 

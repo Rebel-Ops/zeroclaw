@@ -6052,6 +6052,8 @@ pub struct ChannelsConfig {
     pub discord_history: Option<DiscordHistoryConfig>,
     /// Slack bot channel configuration.
     pub slack: Option<SlackConfig>,
+    /// RebelOps organization chat channel configuration.
+    pub rebelops: Option<RebelOpsConfig>,
     /// Mattermost bot channel configuration.
     pub mattermost: Option<MattermostConfig>,
     /// Webhook channel configuration.
@@ -6148,6 +6150,10 @@ impl ChannelsConfig {
             (
                 Box::new(ConfigWrapper::new(self.slack.as_ref())),
                 self.slack.is_some(),
+            ),
+            (
+                Box::new(ConfigWrapper::new(self.rebelops.as_ref())),
+                self.rebelops.is_some(),
             ),
             (
                 Box::new(ConfigWrapper::new(self.mattermost.as_ref())),
@@ -6264,6 +6270,7 @@ impl Default for ChannelsConfig {
             discord: None,
             discord_history: None,
             slack: None,
+            rebelops: None,
             mattermost: None,
             webhook: None,
             imessage: None,
@@ -6495,6 +6502,72 @@ impl ChannelConfig for SlackConfig {
     }
     fn desc() -> &'static str {
         "connect your bot"
+    }
+}
+
+fn default_rebelops_api_base_path() -> String {
+    "/api".to_string()
+}
+
+fn default_rebelops_timeout_ms() -> u64 {
+    15_000
+}
+
+fn default_rebelops_supabase_url() -> String {
+    "https://ktwadrkkhaxfqynbwird.supabase.co".to_string()
+}
+
+fn default_rebelops_supabase_anon_key() -> String {
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0d2FkcmtraGF4ZnF5bmJ3aXJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2Mjk5NzgsImV4cCI6MjA2NTIwNTk3OH0.urppeLRkk738LINWlEi_NYiStEIR9uy74UdeH1sjROI".to_string()
+}
+
+/// RebelOps organization chat channel configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RebelOpsConfig {
+    /// RebelOps bot account email used for Supabase password grant authentication.
+    #[serde(default)]
+    pub username: Option<String>,
+    /// RebelOps bot account password used for Supabase password grant authentication.
+    #[serde(default)]
+    pub password: Option<String>,
+    /// Base API path exposed by the organization server. Default: `/api`.
+    #[serde(default = "default_rebelops_api_base_path")]
+    pub api_base_path: String,
+    /// Mentions forwarded when posting bot replies into RebelOps project chat.
+    #[serde(default)]
+    pub mentions: Vec<String>,
+    /// HTTP timeout in milliseconds for auth, discovery, probing, and send operations.
+    #[serde(default = "default_rebelops_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Supabase project URL for account auth and linked organization discovery.
+    #[serde(default = "default_rebelops_supabase_url")]
+    pub supabase_url: String,
+    /// Supabase anon key for account auth and linked organization discovery.
+    #[serde(default = "default_rebelops_supabase_anon_key")]
+    pub supabase_anon_key: String,
+}
+
+impl Default for RebelOpsConfig {
+    fn default() -> Self {
+        Self {
+            username: None,
+            password: None,
+            api_base_path: default_rebelops_api_base_path(),
+            mentions: Vec::new(),
+            timeout_ms: default_rebelops_timeout_ms(),
+            supabase_url: default_rebelops_supabase_url(),
+            supabase_anon_key: default_rebelops_supabase_anon_key(),
+        }
+    }
+}
+
+impl ChannelConfig for RebelOpsConfig {
+    fn name() -> &'static str {
+        "RebelOps"
+    }
+
+    fn desc() -> &'static str {
+        "organization chat via orgy-server"
     }
 }
 
@@ -8984,6 +9057,13 @@ impl Config {
                     "config.channels_config.slack.app_token",
                 )?;
             }
+            if let Some(ref mut rebelops) = config.channels_config.rebelops {
+                decrypt_optional_secret(
+                    &store,
+                    &mut rebelops.password,
+                    "config.channels_config.rebelops.password",
+                )?;
+            }
             if let Some(ref mut mm) = config.channels_config.mattermost {
                 decrypt_secret(
                     &store,
@@ -10444,6 +10524,13 @@ impl Config {
                 "config.channels_config.slack.app_token",
             )?;
         }
+        if let Some(ref mut rebelops) = config_to_save.channels_config.rebelops {
+            encrypt_optional_secret(
+                &store,
+                &mut rebelops.password,
+                "config.channels_config.rebelops.password",
+            )?;
+        }
         if let Some(ref mut mm) = config_to_save.channels_config.mattermost {
             encrypt_secret(
                 &store,
@@ -11308,6 +11395,7 @@ auto_save = true
                 discord: None,
                 discord_history: None,
                 slack: None,
+                rebelops: None,
                 mattermost: None,
                 webhook: None,
                 imessage: None,
@@ -12310,6 +12398,7 @@ allowed_users = ["@ops:matrix.org"]
             discord: None,
             discord_history: None,
             slack: None,
+            rebelops: None,
             mattermost: None,
             webhook: None,
             imessage: Some(IMessageConfig {
@@ -12663,6 +12752,7 @@ channel_ids = ["C123", "D456"]
             discord: None,
             discord_history: None,
             slack: None,
+            rebelops: None,
             mattermost: None,
             webhook: None,
             imessage: None,

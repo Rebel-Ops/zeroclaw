@@ -1031,6 +1031,9 @@ fn mask_sensitive_fields(config: &crate::config::Config) -> crate::config::Confi
         mask_required_secret(&mut slack.bot_token);
         mask_optional_secret(&mut slack.app_token);
     }
+    if let Some(rebelops) = masked.channels_config.rebelops.as_mut() {
+        mask_optional_secret(&mut rebelops.password);
+    }
     if let Some(mattermost) = masked.channels_config.mattermost.as_mut() {
         mask_required_secret(&mut mattermost.bot_token);
     }
@@ -1160,6 +1163,12 @@ fn restore_masked_sensitive_fields(
     ) {
         restore_required_secret(&mut incoming_ch.bot_token, &current_ch.bot_token);
         restore_optional_secret(&mut incoming_ch.app_token, &current_ch.app_token);
+    }
+    if let (Some(incoming_ch), Some(current_ch)) = (
+        incoming.channels_config.rebelops.as_mut(),
+        current.channels_config.rebelops.as_ref(),
+    ) {
+        restore_optional_secret(&mut incoming_ch.password, &current_ch.password);
     }
     if let (Some(incoming_ch), Some(current_ch)) = (
         incoming.channels_config.mattermost.as_mut(),

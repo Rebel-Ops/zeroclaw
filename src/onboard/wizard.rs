@@ -3,7 +3,7 @@ use crate::cli_input::Input;
 use crate::config::schema::{default_nostr_relays, NostrConfig};
 use crate::config::schema::{
     DingTalkConfig, IrcConfig, LarkReceiveMode, LinqConfig, NextcloudTalkConfig, QQConfig,
-    SignalConfig, StreamMode, WhatsAppChatPolicy, WhatsAppConfig, WhatsAppWebMode,
+    RebelOpsConfig, SignalConfig, StreamMode, WhatsAppChatPolicy, WhatsAppConfig, WhatsAppWebMode,
 };
 use crate::config::{
     AutonomyConfig, BrowserConfig, ChannelsConfig, ComposioConfig, Config, DiscordConfig,
@@ -3537,6 +3537,7 @@ enum ChannelMenuChoice {
     Telegram,
     Discord,
     Slack,
+    RebelOps,
     IMessage,
     Matrix,
     Signal,
@@ -3558,6 +3559,7 @@ const CHANNEL_MENU_CHOICES: &[ChannelMenuChoice] = &[
     ChannelMenuChoice::Telegram,
     ChannelMenuChoice::Discord,
     ChannelMenuChoice::Slack,
+    ChannelMenuChoice::RebelOps,
     ChannelMenuChoice::IMessage,
     ChannelMenuChoice::Matrix,
     ChannelMenuChoice::Signal,
@@ -3614,6 +3616,14 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         "✅ connected"
                     } else {
                         "— connect your bot"
+                    }
+                ),
+                ChannelMenuChoice::RebelOps => format!(
+                    "RebelOps  {}",
+                    if config.rebelops.is_some() {
+                        "✅ connected"
+                    } else {
+                        "— org chat via orgy-server"
                     }
                 ),
                 ChannelMenuChoice::IMessage => format!(
@@ -4074,6 +4084,54 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     stream_drafts: false,
                     draft_update_interval_ms: 1200,
                 });
+            }
+            ChannelMenuChoice::RebelOps => {
+                println!();
+                println!(
+                    "  {} {}",
+                    style("RebelOps Setup").white().bold(),
+                    style("— project chat inside your organization server").dim()
+                );
+                print_bullet("1. Use a RebelOps bot account with a normal Supabase login.");
+                print_bullet("2. Link that bot account to the organizations it should monitor.");
+                print_bullet("3. Messages must begin with @user:<the-bot-supabase-user-id> to trigger a reply.");
+                println!();
+
+                let username: String = Input::new()
+                    .with_prompt("  Bot account email")
+                    .interact_text()?;
+
+                if username.trim().is_empty() {
+                    println!("  {} Skipped", style("→").dim());
+                    continue;
+                }
+
+                let password: String = Input::new()
+                    .with_prompt("  Bot account password")
+                    .interact_text()?;
+
+                if password.trim().is_empty() {
+                    println!("  {} Skipped — password required", style("→").dim());
+                    continue;
+                }
+
+                let mentions_raw: String = Input::new()
+                    .with_prompt("  Mention user IDs on bot replies (optional, comma-separated)")
+                    .allow_empty(true)
+                    .interact_text()?;
+
+                let mentions = mentions_raw
+                    .split(',')
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .collect();
+
+                let mut rebelops = RebelOpsConfig::default();
+                rebelops.username = Some(username.trim().to_string());
+                rebelops.password = Some(password);
+                rebelops.mentions = mentions;
+
+                config.rebelops = Some(rebelops);
             }
             ChannelMenuChoice::IMessage => {
                 // ── iMessage ──
