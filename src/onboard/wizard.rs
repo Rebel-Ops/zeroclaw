@@ -3623,7 +3623,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     if config.rebelops.is_some() {
                         "✅ connected"
                     } else {
-                        "— org chat via orgy-server"
+                        "— Collaboration on RebelOps"
                     }
                 ),
                 ChannelMenuChoice::IMessage => format!(

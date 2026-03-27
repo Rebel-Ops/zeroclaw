@@ -6567,7 +6567,7 @@ impl ChannelConfig for RebelOpsConfig {
     }
 
     fn desc() -> &'static str {
-        "organization chat via orgy-server"
+        "Collaboration on RebelOps."
     }
 }
 
