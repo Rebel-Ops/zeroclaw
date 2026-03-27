@@ -455,6 +455,10 @@ fn followup_thread_id(msg: &traits::ChannelMessage) -> Option<String> {
     msg.thread_ts.clone().or_else(|| Some(msg.id.clone()))
 }
 
+fn should_emit_live_tool_call_messages(channel_name: &str, show_tool_calls: bool) -> bool {
+    show_tool_calls && channel_name != "cli" && canonical_channel_name(channel_name) != "rebelops"
+}
+
 fn interruption_scope_key(msg: &traits::ChannelMessage) -> String {
     let channel_name = canonical_channel_name(&msg.channel);
     match &msg.interruption_scope_id {
@@ -2699,7 +2703,7 @@ async fn process_channel_message(
     let notify_channel = target_channel.clone();
     let notify_reply_target = msg.reply_target.clone();
     let notify_thread_root = followup_thread_id(&msg);
-    let notify_task = if msg.channel == "cli" || !ctx.show_tool_calls {
+    let notify_task = if !should_emit_live_tool_call_messages(&msg.channel, ctx.show_tool_calls) {
         Some(tokio::spawn(async move {
             while notify_rx.recv().await.is_some() {}
         }))
@@ -8546,6 +8550,14 @@ BTC is currently around $65,000 based on latest tool output."#
         };
 
         assert_eq!(followup_thread_id(&msg).as_deref(), Some("msg_abc123"));
+    }
+
+    #[test]
+    fn live_tool_call_messages_are_suppressed_for_rebelops() {
+        assert!(!should_emit_live_tool_call_messages("rebelops", true));
+        assert!(!should_emit_live_tool_call_messages("rebelops:passive", true));
+        assert!(!should_emit_live_tool_call_messages("slack", false));
+        assert!(should_emit_live_tool_call_messages("slack", true));
     }
 
     #[test]

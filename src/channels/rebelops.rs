@@ -870,6 +870,7 @@ impl RebelOpsChannel {
             .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
             .map(|value| value.timestamp().max(0) as u64)
             .unwrap_or_else(|| Self::now_ms() / 1000);
+        let reply_context = Self::build_reply_context(&message_id, &sender_id);
 
         let send_result = tx
             .send(ChannelMessage {
@@ -879,7 +880,7 @@ impl RebelOpsChannel {
                 content: message_text,
                 channel: channel_name.to_string(),
                 timestamp,
-                thread_ts: None,
+                thread_ts: Some(reply_context),
                 interruption_scope_id: None,
                 attachments: vec![],
             })
@@ -1361,5 +1362,25 @@ mod tests {
             RebelOpsChannel::build_outbound_mentions(Some(&reply_context)),
             vec!["user-123".to_string()]
         );
+    }
+
+    #[test]
+    fn outbound_message_text_uses_reference_without_sender_when_missing() {
+        let reply_context = super::RebelOpsReplyContext {
+            original_message_id: "77".into(),
+            sender_id: None,
+        };
+
+        let outbound = RebelOpsChannel::build_outbound_message_text(
+            "https://alpha-org.rebelops.app",
+            Some(&reply_context),
+            "Status update",
+        );
+
+        assert_eq!(
+            outbound,
+            "[ref:alpha-org.rebelops.app:chat_messages:77] Status update"
+        );
+        assert!(RebelOpsChannel::build_outbound_mentions(Some(&reply_context)).is_empty());
     }
 }
