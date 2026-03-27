@@ -85,6 +85,12 @@ struct RebelOpsSendResponseMessage {
     id: Option<Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RebelOpsReplyContext {
+    original_message_id: String,
+    sender_id: Option<String>,
+}
+
 pub struct RebelOpsChannel {
     config: RebelOpsConfig,
     client: reqwest::Client,
@@ -254,6 +260,85 @@ impl RebelOpsChannel {
         }
 
         (None, Self::normalize_project_id(Some(trimmed)))
+    }
+
+    fn build_reply_context(message_id: &str, sender_id: &str) -> String {
+        format!("rebelops-reply:{message_id}|sender:{sender_id}")
+    }
+
+    fn parse_reply_context(raw: Option<&str>) -> Option<RebelOpsReplyContext> {
+        let raw = raw?.trim();
+        if raw.is_empty() {
+            return None;
+        }
+
+        if let Some(rest) = raw.strip_prefix("rebelops-reply:") {
+            let (original_message_id, sender_id) = match rest.split_once("|sender:") {
+                Some((message_id, sender_id)) => (message_id.trim(), Some(sender_id.trim())),
+                None => (rest.trim(), None),
+            };
+            if original_message_id.is_empty() {
+                return None;
+            }
+
+            let sender_id = sender_id
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            return Some(RebelOpsReplyContext {
+                original_message_id: original_message_id.to_string(),
+                sender_id,
+            });
+        }
+
+        Some(RebelOpsReplyContext {
+            original_message_id: raw.to_string(),
+            sender_id: None,
+        })
+    }
+
+    fn build_message_reference_tag(
+        organization_url: &str,
+        original_message_id: &str,
+    ) -> Option<String> {
+        let host = reqwest::Url::parse(organization_url)
+            .ok()?
+            .host_str()?
+            .trim()
+            .to_string();
+        if host.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "[ref:{host}:chat_messages:{original_message_id}]"
+        ))
+    }
+
+    fn build_outbound_message_text(
+        organization_url: &str,
+        reply_context: Option<&RebelOpsReplyContext>,
+        text: &str,
+    ) -> String {
+        let mut parts = Vec::new();
+        if let Some(context) = reply_context {
+            if let Some(reference_tag) =
+                Self::build_message_reference_tag(organization_url, &context.original_message_id)
+            {
+                parts.push(reference_tag);
+            }
+            if let Some(sender_id) = context.sender_id.as_deref() {
+                parts.push(format!("@user:{sender_id}"));
+            }
+        }
+        parts.push(text.trim().to_string());
+        parts.join(" ")
+    }
+
+    fn build_outbound_mentions(reply_context: Option<&RebelOpsReplyContext>) -> Vec<String> {
+        reply_context
+            .and_then(|context| context.sender_id.as_ref())
+            .map(|sender_id| vec![sender_id.clone()])
+            .unwrap_or_default()
     }
 
     fn normalize_inbound_message_text(
@@ -1018,6 +1103,13 @@ impl Channel for RebelOpsChannel {
             .await?;
         self.ensure_organization_api_reachable(&session, &organization)
             .await?;
+        let reply_context = Self::parse_reply_context(message.thread_ts.as_deref());
+        let outbound_text = Self::build_outbound_message_text(
+            &organization.organization_url,
+            reply_context.as_ref(),
+            text,
+        );
+        let outbound_mentions = Self::build_outbound_mentions(reply_context.as_ref());
 
         let response = self
             .client
@@ -1026,9 +1118,9 @@ impl Channel for RebelOpsChannel {
             .header("authorization", format!("Bearer {}", session.access_token))
             .timeout(self.timeout())
             .json(&serde_json::json!({
-                "message_text": text,
+                "message_text": outbound_text,
                 "supabase_user_id": session.user_id,
-                "mentions": self.config.mentions,
+                "mentions": outbound_mentions,
             }))
             .send()
             .await
@@ -1233,5 +1325,41 @@ mod tests {
         assert!(channel
             .normalize_inbound_message_text("bot-123", "@user:bot-1234 please summarize")
             .is_none());
+    }
+
+    #[test]
+    fn reply_context_round_trips_message_and_sender() {
+        let encoded = RebelOpsChannel::build_reply_context("42", "user-123");
+        let decoded = RebelOpsChannel::parse_reply_context(Some(&encoded));
+        assert_eq!(
+            decoded,
+            Some(super::RebelOpsReplyContext {
+                original_message_id: "42".into(),
+                sender_id: Some("user-123".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn outbound_message_text_includes_reference_and_sender_mention() {
+        let reply_context = super::RebelOpsReplyContext {
+            original_message_id: "42".into(),
+            sender_id: Some("user-123".into()),
+        };
+
+        let outbound = RebelOpsChannel::build_outbound_message_text(
+            "https://alpha-org.rebelops.app",
+            Some(&reply_context),
+            "Thanks, I checked that.",
+        );
+
+        assert_eq!(
+            outbound,
+            "[ref:alpha-org.rebelops.app:chat_messages:42] @user:user-123 Thanks, I checked that."
+        );
+        assert_eq!(
+            RebelOpsChannel::build_outbound_mentions(Some(&reply_context)),
+            vec!["user-123".to_string()]
+        );
     }
 }

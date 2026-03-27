@@ -6533,7 +6533,7 @@ pub struct RebelOpsConfig {
     /// Base API path exposed by the organization server. Default: `/api`.
     #[serde(default = "default_rebelops_api_base_path")]
     pub api_base_path: String,
-    /// Mentions forwarded when posting bot replies into RebelOps project chat.
+    /// Deprecated legacy static mentions list. RebelOps replies now mention the triggering user automatically.
     #[serde(default)]
     pub mentions: Vec<String>,
     /// HTTP timeout in milliseconds for auth, discovery, probing, and send operations.

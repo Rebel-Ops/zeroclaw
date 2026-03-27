@@ -4092,9 +4092,12 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     style("RebelOps Setup").white().bold(),
                     style("— project chat inside your organization server").dim()
                 );
-                print_bullet("1. Use a RebelOps bot account with a normal Supabase login.");
-                print_bullet("2. Link that bot account to the organizations it should monitor.");
-                print_bullet("3. Messages must begin with @user:<the-bot-supabase-user-id> to trigger a reply.");
+                print_bullet(
+                    "1. Create a standard account for the bot and add it to your organization(s) and project(s).",
+                );
+                print_bullet(
+                    "2. The bot will reply to all messages starting with the bot's mention.",
+                );
                 println!();
 
                 let username: String = Input::new()
@@ -4115,21 +4118,9 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     continue;
                 }
 
-                let mentions_raw: String = Input::new()
-                    .with_prompt("  Mention user IDs on bot replies (optional, comma-separated)")
-                    .allow_empty(true)
-                    .interact_text()?;
-
-                let mentions = mentions_raw
-                    .split(',')
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .collect();
-
                 let mut rebelops = RebelOpsConfig::default();
                 rebelops.username = Some(username.trim().to_string());
                 rebelops.password = Some(password);
-                rebelops.mentions = mentions;
 
                 config.rebelops = Some(rebelops);
             }
