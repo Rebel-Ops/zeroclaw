@@ -5268,6 +5268,11 @@ fn default_auto_approve() -> Vec<String> {
         "content_search".into(),
         "image_info".into(),
         "weather".into(),
+        "rebelops_get_note".into(),
+        "rebelops_list_project_notes".into(),
+        "rebelops_create_note".into(),
+        "rebelops_update_note".into(),
+        "rebelops_delete_note".into(),
     ]
 }
 

@@ -22,7 +22,6 @@ pub struct RebelOpsNotesTool {
 
 #[derive(Clone, Copy)]
 enum RebelOpsNotesOperation {
-    List,
     Get,
     ListProject,
     Create,
@@ -65,10 +64,6 @@ struct AccountLinkedOrganization {
 }
 
 impl RebelOpsNotesTool {
-    pub fn list(security: Arc<SecurityPolicy>, config: RebelOpsConfig) -> Self {
-        Self::new(RebelOpsNotesOperation::List, security, config)
-    }
-
     pub fn get(security: Arc<SecurityPolicy>, config: RebelOpsConfig) -> Self {
         Self::new(RebelOpsNotesOperation::Get, security, config)
     }
@@ -103,7 +98,6 @@ impl RebelOpsNotesTool {
 
     fn operation_name(&self) -> &'static str {
         match self.operation {
-            RebelOpsNotesOperation::List => "rebelops_list_notes",
             RebelOpsNotesOperation::Get => "rebelops_get_note",
             RebelOpsNotesOperation::ListProject => "rebelops_list_project_notes",
             RebelOpsNotesOperation::Create => "rebelops_create_note",
@@ -114,9 +108,6 @@ impl RebelOpsNotesTool {
 
     fn operation_description(&self) -> &'static str {
         match self.operation {
-            RebelOpsNotesOperation::List => {
-                "List RebelOps notes for an organization, optionally filtered by extension or project."
-            }
             RebelOpsNotesOperation::Get => "Fetch a single RebelOps note by ID.",
             RebelOpsNotesOperation::ListProject => {
                 "List RebelOps notes for a project and its sub-projects."
@@ -133,9 +124,9 @@ impl RebelOpsNotesTool {
 
     fn operation_type(&self) -> ToolOperation {
         match self.operation {
-            RebelOpsNotesOperation::List
-            | RebelOpsNotesOperation::Get
-            | RebelOpsNotesOperation::ListProject => ToolOperation::Read,
+            RebelOpsNotesOperation::Get | RebelOpsNotesOperation::ListProject => {
+                ToolOperation::Read
+            }
             RebelOpsNotesOperation::Create
             | RebelOpsNotesOperation::Update
             | RebelOpsNotesOperation::Delete => ToolOperation::Act,
@@ -157,23 +148,6 @@ impl RebelOpsNotesTool {
     fn schema(&self) -> Value {
         let mut properties = Self::base_properties();
         let required = match self.operation {
-            RebelOpsNotesOperation::List => {
-                properties.insert(
-                    "extensionId".to_string(),
-                    json!({
-                        "type": "integer",
-                        "description": "Optional notes extension ID filter."
-                    }),
-                );
-                properties.insert(
-                    "projectId".to_string(),
-                    json!({
-                        "type": "integer",
-                        "description": "Optional project ID filter."
-                    }),
-                );
-                Vec::<&str>::new()
-            }
             RebelOpsNotesOperation::Get => {
                 properties.insert(
                     "noteId".to_string(),
@@ -335,33 +309,12 @@ impl RebelOpsNotesTool {
         }
 
         match self.operation {
-            RebelOpsNotesOperation::List => self.list_notes(args).await,
             RebelOpsNotesOperation::Get => self.get_note(args).await,
             RebelOpsNotesOperation::ListProject => self.list_project_notes(args).await,
             RebelOpsNotesOperation::Create => self.create_note(args).await,
             RebelOpsNotesOperation::Update => self.update_note(args).await,
             RebelOpsNotesOperation::Delete => self.delete_note(args).await,
         }
-    }
-
-    async fn list_notes(&self, args: Value) -> Result<ToolResult> {
-        let organization_slug =
-            optional_string_arg(&args, &["organizationSlug", "organization_slug"])?;
-        let project_id = optional_i64_arg(&args, &["projectId", "project_id"])?;
-        let extension_id = optional_i64_arg(&args, &["extensionId", "extension_id"])?;
-
-        let response = self
-            .client
-            .notes_get(
-                organization_slug.as_deref(),
-                "notes",
-                extension_id,
-                project_id,
-                None,
-            )
-            .await?;
-
-        Ok(json_tool_result(response))
     }
 
     async fn get_note(&self, args: Value) -> Result<ToolResult> {
@@ -1071,13 +1024,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_notes_defaults_to_single_linked_organization() {
+    async fn list_project_notes_defaults_to_single_linked_organization() {
         let server = MockServer::start().await;
         mount_auth(&server).await;
         mount_linked_organizations(&server, &[("alpha", &server.uri())]).await;
 
         Mock::given(method("GET"))
-            .and(path("/api/notes"))
+            .and(path("/api/notes/project/77"))
             .respond_with(ResponseTemplate::new(StatusCode::OK).set_body_json(json!({
                 "notes": [{"id": 42, "title": "Ops note"}],
                 "total": 1
@@ -1085,7 +1038,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = RebelOpsNotesTool::list(test_security(), rebelops_config(&server.uri()));
+        let tool =
+            RebelOpsNotesTool::list_project(test_security(), rebelops_config(&server.uri()));
         let result = tool.execute(json!({ "projectId": 77 })).await.unwrap();
 
         assert!(result.success);
@@ -1147,7 +1101,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_notes_requires_organization_slug_when_multiple_orgs() {
+    async fn get_note_requires_organization_slug_when_multiple_orgs() {
         let server = MockServer::start().await;
         mount_auth(&server).await;
         mount_linked_organizations(
@@ -1156,8 +1110,8 @@ mod tests {
         )
         .await;
 
-        let tool = RebelOpsNotesTool::list(test_security(), rebelops_config(&server.uri()));
-        let result = tool.execute(json!({})).await;
+        let tool = RebelOpsNotesTool::get(test_security(), rebelops_config(&server.uri()));
+        let result = tool.execute(json!({ "noteId": 7 })).await;
 
         let error = result.unwrap_err().to_string();
         assert!(error.contains("organizationSlug is required"));
