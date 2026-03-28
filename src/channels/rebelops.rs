@@ -296,15 +296,28 @@ impl RebelOpsChannel {
         })
     }
 
+    fn build_reference_host(organization: &LinkedOrganization) -> Option<String> {
+        if let Ok(url) = reqwest::Url::parse(&organization.organization_url) {
+            if let Some(host) = url.host_str().map(str::trim).filter(|value| !value.is_empty()) {
+                if host.ends_with(".rebelops.app") {
+                    return Some(host.to_string());
+                }
+            }
+        }
+
+        let slug = organization.slug.trim();
+        if slug.is_empty() {
+            return None;
+        }
+
+        Some(format!("{}.rebelops.app", slug))
+    }
+
     fn build_message_reference_tag(
-        organization_url: &str,
+        organization: &LinkedOrganization,
         original_message_id: &str,
     ) -> Option<String> {
-        let host = reqwest::Url::parse(organization_url)
-            .ok()?
-            .host_str()?
-            .trim()
-            .to_string();
+        let host = Self::build_reference_host(organization)?;
         if host.is_empty() {
             return None;
         }
@@ -315,15 +328,16 @@ impl RebelOpsChannel {
     }
 
     fn build_outbound_message_text(
-        organization_url: &str,
+        organization: &LinkedOrganization,
         reply_context: Option<&RebelOpsReplyContext>,
         text: &str,
     ) -> String {
         let mut parts = Vec::new();
         if let Some(context) = reply_context {
-            if let Some(reference_tag) =
-                Self::build_message_reference_tag(organization_url, &context.original_message_id)
-            {
+            if let Some(reference_tag) = Self::build_message_reference_tag(
+                organization,
+                &context.original_message_id,
+            ) {
                 parts.push(reference_tag);
             }
             if let Some(sender_id) = context.sender_id.as_deref() {
@@ -1106,7 +1120,7 @@ impl Channel for RebelOpsChannel {
             .await?;
         let reply_context = Self::parse_reply_context(message.thread_ts.as_deref());
         let outbound_text = Self::build_outbound_message_text(
-            &organization.organization_url,
+            &organization,
             reply_context.as_ref(),
             text,
         );
@@ -1347,9 +1361,13 @@ mod tests {
             original_message_id: "42".into(),
             sender_id: Some("user-123".into()),
         };
+        let organization = super::LinkedOrganization {
+            slug: "alpha-org".into(),
+            organization_url: "https://alpha-org.rebelops.app".into(),
+        };
 
         let outbound = RebelOpsChannel::build_outbound_message_text(
-            "https://alpha-org.rebelops.app",
+            &organization,
             Some(&reply_context),
             "Thanks, I checked that.",
         );
@@ -1370,9 +1388,13 @@ mod tests {
             original_message_id: "77".into(),
             sender_id: None,
         };
+        let organization = super::LinkedOrganization {
+            slug: "alpha-org".into(),
+            organization_url: "https://alpha-org.rebelops.app".into(),
+        };
 
         let outbound = RebelOpsChannel::build_outbound_message_text(
-            "https://alpha-org.rebelops.app",
+            &organization,
             Some(&reply_context),
             "Status update",
         );
@@ -1382,5 +1404,23 @@ mod tests {
             "[ref:alpha-org.rebelops.app:chat_messages:77] Status update"
         );
         assert!(RebelOpsChannel::build_outbound_mentions(Some(&reply_context)).is_empty());
+    }
+
+    #[test]
+    fn reference_host_falls_back_to_public_rebelops_domain() {
+        let organization = super::LinkedOrganization {
+            slug: "alpha-org".into(),
+            organization_url:
+                "https://org-065b0ed8-e57c-4b7f-89e7-3fb1-rebelops-9dc02168.koyeb.app".into(),
+        };
+
+        assert_eq!(
+            RebelOpsChannel::build_reference_host(&organization).as_deref(),
+            Some("alpha-org.rebelops.app")
+        );
+        assert_eq!(
+            RebelOpsChannel::build_message_reference_tag(&organization, "229").as_deref(),
+            Some("[ref:alpha-org.rebelops.app:chat_messages:229]")
+        );
     }
 }
