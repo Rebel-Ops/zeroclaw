@@ -298,7 +298,11 @@ impl RebelOpsChannel {
 
     fn build_reference_host(organization: &LinkedOrganization) -> Option<String> {
         if let Ok(url) = reqwest::Url::parse(&organization.organization_url) {
-            if let Some(host) = url.host_str().map(str::trim).filter(|value| !value.is_empty()) {
+            if let Some(host) = url
+                .host_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
                 if host.ends_with(".rebelops.app") {
                     return Some(host.to_string());
                 }
@@ -322,9 +326,7 @@ impl RebelOpsChannel {
             return None;
         }
 
-        Some(format!(
-            "[ref:{host}:chat_messages:{original_message_id}]"
-        ))
+        Some(format!("[ref:{host}:chat_messages:{original_message_id}]"))
     }
 
     fn build_outbound_message_text(
@@ -334,10 +336,9 @@ impl RebelOpsChannel {
     ) -> String {
         let mut parts = Vec::new();
         if let Some(context) = reply_context {
-            if let Some(reference_tag) = Self::build_message_reference_tag(
-                organization,
-                &context.original_message_id,
-            ) {
+            if let Some(reference_tag) =
+                Self::build_message_reference_tag(organization, &context.original_message_id)
+            {
                 parts.push(reference_tag);
             }
             if let Some(sender_id) = context.sender_id.as_deref() {
@@ -1119,11 +1120,8 @@ impl Channel for RebelOpsChannel {
         self.ensure_organization_api_reachable(&session, &organization)
             .await?;
         let reply_context = Self::parse_reply_context(message.thread_ts.as_deref());
-        let outbound_text = Self::build_outbound_message_text(
-            &organization,
-            reply_context.as_ref(),
-            text,
-        );
+        let outbound_text =
+            Self::build_outbound_message_text(&organization, reply_context.as_ref(), text);
         let outbound_mentions = Self::build_outbound_mentions(reply_context.as_ref());
 
         let response = self

@@ -123,6 +123,7 @@ use crate::util::truncate_with_ellipsis;
 use anyhow::{Context, Result};
 use portable_atomic::{AtomicU64, Ordering};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -692,6 +693,363 @@ fn build_channel_system_prompt(
     }
 
     prompt
+}
+
+#[derive(Debug, Deserialize)]
+struct RebelOpsPromptAuthResponse {
+    access_token: Option<String>,
+    user: Option<RebelOpsPromptAuthUser>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RebelOpsPromptAuthUser {
+    id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RebelOpsPromptLinkedOrganizationRow {
+    organizations: Option<RebelOpsPromptLinkedOrganization>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RebelOpsPromptLinkedOrganization {
+    slug: Option<String>,
+    deleted_at: Option<String>,
+    platform_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RebelOpsPromptResolvedContext {
+    organization_slug: String,
+    project_id: String,
+    organization_role: Option<String>,
+    project_role: Option<String>,
+    project_name: Option<String>,
+    extension_mappings: Vec<String>,
+}
+
+fn parse_rebelops_prompt_target(reply_target: &str) -> Option<(String, String)> {
+    let trimmed = reply_target.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("organization:") {
+        if let Some((slug, project_id)) = rest.split_once("/project:") {
+            let slug = slug.trim();
+            let project_id = project_id.trim();
+            if !slug.is_empty() && !project_id.is_empty() {
+                return Some((slug.to_ascii_lowercase(), project_id.to_string()));
+            }
+        }
+    }
+
+    if let Some((slug, project_id)) = trimmed.split_once('/') {
+        let slug = slug.trim();
+        let project_id = project_id.trim();
+        if !slug.is_empty() && !project_id.is_empty() {
+            return Some((slug.to_ascii_lowercase(), project_id.to_string()));
+        }
+    }
+
+    if let Some((slug, project_id)) = trimmed.split_once(':') {
+        let slug = slug.trim();
+        let project_id = project_id.trim();
+        if !slug.eq_ignore_ascii_case("project") && !slug.is_empty() && !project_id.is_empty() {
+            return Some((slug.to_ascii_lowercase(), project_id.to_string()));
+        }
+    }
+
+    None
+}
+
+fn rebelops_prompt_context_fallback(reply_target: &str) -> Option<String> {
+    let (organization_slug, project_id) = parse_rebelops_prompt_target(reply_target)?;
+
+    Some(format!(
+        "\n\nRebelOps context:\n- This message is coming from RebelOps. Prefer RebelOps tools when the user is asking about RebelOps data or actions.\n- Current organization slug: {organization_slug}\n- Current project ID: {project_id}\n- Default to the current project ID {project_id} unless the user explicitly asks for a different project.\n- For RebelOps tool calls, use organizationSlug={organization_slug} when a tool requires organization scope.\n- Do not guess project IDs or extension IDs. Use the current project ID when appropriate, use known extension mappings when available, or ask the user to clarify.\n- Treat RebelOps as the active working context for this conversation, including its tools, permissions, and project scope."
+    ))
+}
+
+fn build_rebelops_prompt_context_block(context: &RebelOpsPromptResolvedContext) -> String {
+    let mut lines = vec![
+        "\n\nRebelOps context:".to_string(),
+        "- This message is coming from RebelOps. Prefer RebelOps tools when the user is asking about RebelOps data or actions.".to_string(),
+        format!("- Current organization slug: {}", context.organization_slug),
+        format!("- Current project ID: {}", context.project_id),
+    ];
+
+    if let Some(project_name) = context
+        .project_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("- Current project name: {project_name}"));
+    }
+
+    if let Some(organization_role) = context
+        .organization_role
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("- Bot organization role: {organization_role}"));
+    }
+
+    if let Some(project_role) = context
+        .project_role
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!(
+            "- Bot project role in the current project: {project_role}"
+        ));
+    }
+
+    lines.push(format!(
+        "- Default to the current project ID {} unless the user explicitly asks for a different project.",
+        context.project_id
+    ));
+    lines.push(format!(
+        "- For RebelOps tool calls, use organizationSlug={} when a tool requires organization scope.",
+        context.organization_slug
+    ));
+    lines.push(
+        "- Do not guess project IDs or extension IDs. Use the current project ID when appropriate, use known extension mappings when available, or ask the user to clarify.".to_string(),
+    );
+    lines.push(
+        "- Treat RebelOps as the active working context for this conversation, including its tools, permissions, and current project scope.".to_string(),
+    );
+
+    if !context.extension_mappings.is_empty() {
+        lines.push("- Extension ID mapping:".to_string());
+        lines.extend(
+            context
+                .extension_mappings
+                .iter()
+                .map(|mapping| format!("  - {mapping}")),
+        );
+    }
+
+    lines.join("\n")
+}
+
+fn rebelops_prompt_api_base_path(config: &crate::config::schema::RebelOpsConfig) -> String {
+    if config.api_base_path.starts_with('/') {
+        config.api_base_path.trim_end_matches('/').to_string()
+    } else {
+        format!("/{}", config.api_base_path.trim_matches('/'))
+    }
+}
+
+async fn build_rebelops_prompt_context(
+    prompt_config: &crate::config::Config,
+    reply_target: &str,
+) -> Option<String> {
+    let Some(rebelops) = prompt_config.channels_config.rebelops.as_ref() else {
+        return rebelops_prompt_context_fallback(reply_target);
+    };
+
+    let Some((organization_slug, project_id)) = parse_rebelops_prompt_target(reply_target) else {
+        return None;
+    };
+
+    let username = rebelops
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let password = rebelops
+        .password
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    let timeout = Duration::from_millis(rebelops.timeout_ms.max(1_000));
+    let client = reqwest::Client::new();
+
+    let mut auth_url = reqwest::Url::parse(&rebelops.supabase_url).ok()?;
+    auth_url.set_path("/auth/v1/token");
+    auth_url.set_query(Some("grant_type=password"));
+
+    let auth_response = client
+        .post(auth_url)
+        .header("content-type", "application/json")
+        .header("apikey", rebelops.supabase_anon_key.clone())
+        .header(
+            "authorization",
+            format!("Bearer {}", rebelops.supabase_anon_key),
+        )
+        .timeout(timeout)
+        .json(&serde_json::json!({
+            "email": username,
+            "password": password,
+        }))
+        .send()
+        .await
+        .ok()?;
+
+    if !auth_response.status().is_success() {
+        return rebelops_prompt_context_fallback(reply_target);
+    }
+
+    let auth_payload: RebelOpsPromptAuthResponse = auth_response.json().await.ok()?;
+    let access_token = auth_payload.access_token?.trim().to_string();
+    let user_id = auth_payload.user?.id?.trim().to_string();
+    if access_token.is_empty() || user_id.is_empty() {
+        return rebelops_prompt_context_fallback(reply_target);
+    }
+
+    let mut linked_url = reqwest::Url::parse(&rebelops.supabase_url).ok()?;
+    linked_url.set_path("/rest/v1/account_linked_organizations");
+    linked_url
+        .query_pairs_mut()
+        .append_pair(
+            "select",
+            "id,created_at,organization_id,organizations(id,slug,deleted_at,platform_url)",
+        )
+        .append_pair("order", "created_at.asc");
+
+    let linked_response = client
+        .get(linked_url)
+        .header("apikey", rebelops.supabase_anon_key.clone())
+        .header("authorization", format!("Bearer {access_token}"))
+        .header("content-type", "application/json")
+        .timeout(timeout)
+        .send()
+        .await
+        .ok()?;
+    if !linked_response.status().is_success() {
+        return rebelops_prompt_context_fallback(reply_target);
+    }
+
+    let linked_rows: Vec<RebelOpsPromptLinkedOrganizationRow> =
+        linked_response.json().await.ok()?;
+    let organization_url = linked_rows
+        .into_iter()
+        .filter_map(|row| row.organizations)
+        .find_map(|organization| {
+            if organization.deleted_at.is_some() {
+                return None;
+            }
+            let slug = organization.slug?.trim().to_ascii_lowercase();
+            let url = organization.platform_url?.trim().to_string();
+            if slug == organization_slug && !url.is_empty() {
+                Some(url)
+            } else {
+                None
+            }
+        })?;
+
+    let api_base_path = rebelops_prompt_api_base_path(rebelops);
+    let mut extensions_url = reqwest::Url::parse(&organization_url).ok()?;
+    extensions_url.set_path(&format!("{api_base_path}/extensions"));
+    let mut projects_url = reqwest::Url::parse(&organization_url).ok()?;
+    projects_url.set_path(&format!("{api_base_path}/projects"));
+    projects_url
+        .query_pairs_mut()
+        .append_pair("ids", &project_id);
+
+    let extensions_response = client
+        .get(extensions_url)
+        .header("authorization", format!("Bearer {access_token}"))
+        .header("content-type", "application/json")
+        .timeout(timeout)
+        .send()
+        .await
+        .ok();
+    let projects_response = client
+        .get(projects_url)
+        .header("authorization", format!("Bearer {access_token}"))
+        .header("content-type", "application/json")
+        .timeout(timeout)
+        .send()
+        .await
+        .ok();
+
+    let mut context = RebelOpsPromptResolvedContext {
+        organization_slug,
+        project_id,
+        organization_role: None,
+        project_role: None,
+        project_name: None,
+        extension_mappings: Vec::new(),
+    };
+
+    if let Some(response) = extensions_response {
+        if response.status().is_success() {
+            if let Ok(payload) = response.json::<Value>().await {
+                context.organization_role = payload
+                    .get("userRole")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
+                if let Some(extensions) = payload.get("extensions").and_then(Value::as_array) {
+                    context.extension_mappings = extensions
+                        .iter()
+                        .filter_map(|extension| {
+                            let id = extension.get("id").and_then(Value::as_i64)?;
+                            let manifest = extension.get("manifest")?;
+                            let name = manifest
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .or_else(|| manifest.get("displayName").and_then(Value::as_str))
+                                .unwrap_or("Unnamed Extension");
+                            let source = manifest
+                                .get("source")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown");
+                            Some(format!("ID {id}: {name} ({source})"))
+                        })
+                        .collect();
+                }
+            }
+        }
+    }
+
+    if let Some(response) = projects_response {
+        if response.status().is_success() {
+            if let Ok(payload) = response.json::<Value>().await {
+                if let Some(project) = payload
+                    .get("projects")
+                    .and_then(Value::as_array)
+                    .and_then(|projects| projects.first())
+                {
+                    context.project_name = project
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned);
+
+                    let supervisor_ids = project
+                        .get("supervisor_supabase_ids")
+                        .and_then(Value::as_array)
+                        .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    let member_ids = project
+                        .get("member_supabase_ids")
+                        .and_then(Value::as_array)
+                        .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                        .unwrap_or_default();
+
+                    context.project_role = if supervisor_ids.iter().any(|id| *id == user_id) {
+                        Some("supervisor".to_string())
+                    } else if member_ids.iter().any(|id| *id == user_id) {
+                        Some("member".to_string())
+                    } else if matches!(
+                        context.organization_role.as_deref(),
+                        Some("chief" | "director" | "owner")
+                    ) {
+                        Some("elevated via organization role".to_string())
+                    } else {
+                        None
+                    };
+                }
+            }
+        }
+    }
+
+    Some(build_rebelops_prompt_context_block(&context))
 }
 
 fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
@@ -2585,6 +2943,13 @@ async fn process_channel_message(
     };
     let mut system_prompt =
         build_channel_system_prompt(&base_system_prompt, &msg.channel, &msg.reply_target);
+    if canonical_channel_name(&msg.channel) == "rebelops" {
+        if let Some(rebelops_context) =
+            build_rebelops_prompt_context(ctx.prompt_config.as_ref(), &msg.reply_target).await
+        {
+            system_prompt.push_str(&rebelops_context);
+        }
+    }
     if !memory_context.is_empty() {
         let _ = write!(system_prompt, "\n\n{memory_context}");
     }
@@ -8555,7 +8920,10 @@ BTC is currently around $65,000 based on latest tool output."#
     #[test]
     fn live_tool_call_messages_are_suppressed_for_rebelops() {
         assert!(!should_emit_live_tool_call_messages("rebelops", true));
-        assert!(!should_emit_live_tool_call_messages("rebelops:passive", true));
+        assert!(!should_emit_live_tool_call_messages(
+            "rebelops:passive",
+            true
+        ));
         assert!(!should_emit_live_tool_call_messages("slack", false));
         assert!(should_emit_live_tool_call_messages("slack", true));
     }
@@ -10570,6 +10938,36 @@ This is an example JSON object for profile settings."#;
             attachments: vec![],
         };
         assert_eq!(interruption_scope_key(&msg), "slack_C123_alice");
+    }
+
+    #[test]
+    fn parse_rebelops_prompt_target_supports_slug_and_project() {
+        assert_eq!(
+            parse_rebelops_prompt_target("alpha-org/42"),
+            Some(("alpha-org".to_string(), "42".to_string()))
+        );
+        assert_eq!(
+            parse_rebelops_prompt_target("organization:beta/project:99"),
+            Some(("beta".to_string(), "99".to_string()))
+        );
+    }
+
+    #[test]
+    fn build_rebelops_prompt_context_block_includes_project_guidance() {
+        let block = build_rebelops_prompt_context_block(&RebelOpsPromptResolvedContext {
+            organization_slug: "alpha".to_string(),
+            project_id: "77".to_string(),
+            organization_role: Some("chief".to_string()),
+            project_role: Some("elevated via organization role".to_string()),
+            project_name: Some("Ops".to_string()),
+            extension_mappings: vec!["ID 5: Notes (rebelops/notes)".to_string()],
+        });
+
+        assert!(block.contains("Current organization slug: alpha"));
+        assert!(block.contains("Current project ID: 77"));
+        assert!(block.contains("Default to the current project ID 77"));
+        assert!(block.contains("Bot organization role: chief"));
+        assert!(block.contains("ID 5: Notes (rebelops/notes)"));
     }
 
     #[tokio::test]

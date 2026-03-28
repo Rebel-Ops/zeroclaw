@@ -84,6 +84,7 @@ pub mod proxy_config;
 pub mod pushover;
 pub mod reaction;
 pub mod read_skill;
+pub mod rebelops_notes;
 pub mod report_templates;
 pub mod schedule;
 pub mod schema;
@@ -177,6 +178,7 @@ pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
 pub use reaction::ReactionTool;
 pub use read_skill::ReadSkillTool;
+pub use rebelops_notes::RebelOpsNotesTool;
 pub use schedule::ScheduleTool;
 #[allow(unused_imports)]
 pub use schema::{CleaningStrategy, SchemaCleanr};
@@ -491,6 +493,33 @@ pub fn all_tools_with_runtime(
             workspace_dir.to_path_buf(),
             root_config.skills.open_skills_enabled,
             root_config.skills.open_skills_dir.clone(),
+        )));
+    }
+
+    if let Some(rebelops) = root_config.channels_config.rebelops.clone() {
+        tool_arcs.push(Arc::new(RebelOpsNotesTool::list(
+            security.clone(),
+            rebelops.clone(),
+        )));
+        tool_arcs.push(Arc::new(RebelOpsNotesTool::get(
+            security.clone(),
+            rebelops.clone(),
+        )));
+        tool_arcs.push(Arc::new(RebelOpsNotesTool::list_project(
+            security.clone(),
+            rebelops.clone(),
+        )));
+        tool_arcs.push(Arc::new(RebelOpsNotesTool::create(
+            security.clone(),
+            rebelops.clone(),
+        )));
+        tool_arcs.push(Arc::new(RebelOpsNotesTool::update(
+            security.clone(),
+            rebelops.clone(),
+        )));
+        tool_arcs.push(Arc::new(RebelOpsNotesTool::delete(
+            security.clone(),
+            rebelops,
         )));
     }
 
