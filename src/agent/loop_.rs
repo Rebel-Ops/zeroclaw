@@ -3514,6 +3514,16 @@ pub(crate) async fn run_tool_call_loop(
                 }),
             );
 
+            if tool_name.starts_with("rebelops_") {
+                tracing::info!(
+                    channel = channel_name,
+                    tool = %tool_name,
+                    iteration = iteration + 1,
+                    args = %truncate_with_ellipsis(&scrub_credentials(&tool_args.to_string()), 300),
+                    "Starting RebelOps tool call"
+                );
+            }
+
             // ── Progress: tool start ────────────────────────────
             if let Some(ref tx) = on_delta {
                 let hint = truncate_tool_args_for_progress(&tool_name, &tool_args, 60);
@@ -3574,6 +3584,20 @@ pub(crate) async fn run_tool_call_loop(
                     "output": scrub_credentials(&outcome.output),
                 }),
             );
+
+            if call.name.starts_with("rebelops_") {
+                tracing::info!(
+                    channel = channel_name,
+                    tool = %call.name,
+                    iteration = iteration + 1,
+                    success = outcome.success,
+                    duration_ms = outcome.duration.as_millis(),
+                    error = outcome.error_reason.as_deref().unwrap_or(""),
+                    output_chars = outcome.output.chars().count(),
+                    output_excerpt = %truncate_with_ellipsis(&scrub_credentials(&outcome.output), 300),
+                    "Completed RebelOps tool call"
+                );
+            }
 
             // ── Hook: after_tool_call (void) ─────────────────
             if let Some(hooks) = hooks {

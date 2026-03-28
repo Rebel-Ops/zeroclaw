@@ -3336,6 +3336,20 @@ async fn process_channel_message(
                 sanitized_response
             };
 
+            if msg.channel == "rebelops" {
+                tracing::info!(
+                    channel = %msg.channel,
+                    sender = %msg.sender,
+                    raw_chars = outbound_response.chars().count(),
+                    raw_trimmed_empty = outbound_response.trim().is_empty(),
+                    sanitized_chars = delivered_response.chars().count(),
+                    sanitized_trimmed_empty = delivered_response.trim().is_empty(),
+                    raw_excerpt = %truncate_with_ellipsis(&scrub_credentials(&outbound_response), 300),
+                    delivered_excerpt = %truncate_with_ellipsis(&scrub_credentials(&delivered_response), 300),
+                    "RebelOps response assembled for delivery"
+                );
+            }
+
             runtime_trace::record_event(
                 "channel_message_outbound",
                 Some(msg.channel.as_str()),
@@ -3395,6 +3409,16 @@ async fn process_channel_message(
                 truncate_with_ellipsis(&delivered_response, 80)
             );
             if let Some(channel) = target_channel.as_ref() {
+                if msg.channel == "rebelops" && delivered_response.trim().is_empty() {
+                    tracing::warn!(
+                        sender = %msg.sender,
+                        reply_target = %msg.reply_target,
+                        thread_ts = msg.thread_ts.as_deref().unwrap_or(""),
+                        raw_chars = outbound_response.chars().count(),
+                        raw_excerpt = %truncate_with_ellipsis(&scrub_credentials(&outbound_response), 300),
+                        "Refusing to send empty RebelOps response after final assembly"
+                    );
+                }
                 if let Some(ref draft_id) = draft_message_id {
                     if let Err(e) = channel
                         .finalize_draft(&msg.reply_target, draft_id, &delivered_response)
