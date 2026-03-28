@@ -194,28 +194,28 @@ impl RebelOpsNotesTool {
                     "title".to_string(),
                     json!({
                         "type": "string",
-                        "description": "Plain-text note title."
+                        "description": "Plain-text note title. Use this for normal note titles."
                     }),
                 );
                 properties.insert(
                     "titleEncrypted".to_string(),
                     json!({
                         "type": "string",
-                        "description": "Encrypted note title."
+                        "description": "Encrypted note title. Only use this when the caller already provided encrypted text."
                     }),
                 );
                 properties.insert(
                     "description".to_string(),
                     json!({
                         "type": "string",
-                        "description": "Plain-text note description."
+                        "description": "Plain-text note description. Use this for normal note content."
                     }),
                 );
                 properties.insert(
                     "descriptionEncrypted".to_string(),
                     json!({
                         "type": "string",
-                        "description": "Encrypted note description."
+                        "description": "Encrypted note description. Only use this when the caller already provided encrypted text."
                     }),
                 );
                 properties.insert(
@@ -289,11 +289,20 @@ impl RebelOpsNotesTool {
             }
         };
 
-        json!({
+        let mut schema = json!({
             "type": "object",
             "properties": properties,
             "required": required,
-        })
+        });
+
+        if matches!(self.operation, RebelOpsNotesOperation::Create) {
+            schema["anyOf"] = json!([
+                { "required": ["description"] },
+                { "required": ["descriptionEncrypted"] }
+            ]);
+        }
+
+        schema
     }
 
     async fn run(&self, args: Value) -> Result<ToolResult> {
@@ -1098,6 +1107,23 @@ mod tests {
         let payload: Value = serde_json::from_str(&result.output).unwrap();
         assert_eq!(payload["note"]["id"], json!(7));
         assert_eq!(payload["note"]["extension_id"], json!(12));
+    }
+
+    #[test]
+    fn create_note_schema_requires_description_payload() {
+        let tool = RebelOpsNotesTool::create(
+            test_security(),
+            rebelops_config("https://example.com"),
+        );
+
+        let schema = tool.parameters_schema();
+        assert_eq!(
+            schema["anyOf"],
+            json!([
+                { "required": ["description"] },
+                { "required": ["descriptionEncrypted"] }
+            ])
+        );
     }
 
     #[tokio::test]
