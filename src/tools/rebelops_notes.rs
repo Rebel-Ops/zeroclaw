@@ -4,7 +4,7 @@ use crate::security::policy::ToolOperation;
 use crate::security::SecurityPolicy;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use reqwest::{Method, StatusCode};
+use reqwest::Method;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
