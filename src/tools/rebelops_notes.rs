@@ -103,12 +103,12 @@ impl RebelOpsNotesTool {
 
     fn operation_name(&self) -> &'static str {
         match self.operation {
-            RebelOpsNotesOperation::List => "list_notes",
-            RebelOpsNotesOperation::Get => "get_note",
-            RebelOpsNotesOperation::ListProject => "list_project_notes",
-            RebelOpsNotesOperation::Create => "create_note",
-            RebelOpsNotesOperation::Update => "update_note",
-            RebelOpsNotesOperation::Delete => "delete_note",
+            RebelOpsNotesOperation::List => "rebelops_list_notes",
+            RebelOpsNotesOperation::Get => "rebelops_get_note",
+            RebelOpsNotesOperation::ListProject => "rebelops_list_project_notes",
+            RebelOpsNotesOperation::Create => "rebelops_create_note",
+            RebelOpsNotesOperation::Update => "rebelops_update_note",
+            RebelOpsNotesOperation::Delete => "rebelops_delete_note",
         }
     }
 
@@ -416,7 +416,7 @@ impl RebelOpsNotesTool {
         let onboarding = optional_bool_arg(&args, &["onboarding"])?;
 
         if description.is_none() && description_encrypted.is_none() {
-            bail!("create_note requires either 'description' or 'descriptionEncrypted'");
+            bail!("rebelops_create_note requires either 'description' or 'descriptionEncrypted'");
         }
 
         let extension_id = self
@@ -472,7 +472,7 @@ impl RebelOpsNotesTool {
         insert_optional_bool(&mut body, "onboarding", onboarding);
 
         if body.is_empty() {
-            bail!("update_note requires at least one field to update");
+            bail!("rebelops_update_note requires at least one field to update");
         }
 
         let response = self

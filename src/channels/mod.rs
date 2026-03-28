@@ -767,7 +767,7 @@ fn rebelops_prompt_context_fallback(reply_target: &str) -> Option<String> {
     let (organization_slug, project_id) = parse_rebelops_prompt_target(reply_target)?;
 
     Some(format!(
-        "\n\nRebelOps context:\n- This message is coming from RebelOps. Prefer RebelOps tools when the user is asking about RebelOps data or actions.\n- Current organization slug: {organization_slug}\n- Current project ID: {project_id}\n- Default to the current project ID {project_id} unless the user explicitly asks for a different project.\n- For RebelOps tool calls, use organizationSlug={organization_slug} when a tool requires organization scope.\n- Do not guess project IDs or extension IDs. Use the current project ID when appropriate, use known extension mappings when available, or ask the user to clarify.\n- Treat RebelOps as the active working context for this conversation, including its tools, permissions, and project scope."
+        "\n\nRebelOps context:\n- This message is coming from RebelOps. Prefer RebelOps tools when the user is asking about RebelOps data or actions.\n- Current organization slug: {organization_slug}\n- Current project ID: {project_id}\n- Default to the current project ID {project_id} unless the user explicitly asks for a different project.\n- For RebelOps tool calls, use organizationSlug={organization_slug} when a tool requires organization scope.\n- RebelOps tool names are prefixed with rebelops_.\n- Do not guess project IDs or extension IDs. Use the current project ID when appropriate, use known extension mappings when available, or ask the user to clarify.\n- Treat RebelOps as the active working context for this conversation, including its tools, permissions, and project scope."
     ))
 }
 
@@ -816,6 +816,7 @@ fn build_rebelops_prompt_context_block(context: &RebelOpsPromptResolvedContext) 
         "- For RebelOps tool calls, use organizationSlug={} when a tool requires organization scope.",
         context.organization_slug
     ));
+    lines.push("- RebelOps tool names are prefixed with rebelops_.".to_string());
     lines.push(
         "- Do not guess project IDs or extension IDs. Use the current project ID when appropriate, use known extension mappings when available, or ask the user to clarify.".to_string(),
     );
@@ -10966,6 +10967,7 @@ This is an example JSON object for profile settings."#;
         assert!(block.contains("Current organization slug: alpha"));
         assert!(block.contains("Current project ID: 77"));
         assert!(block.contains("Default to the current project ID 77"));
+        assert!(block.contains("RebelOps tool names are prefixed with rebelops_."));
         assert!(block.contains("Bot organization role: chief"));
         assert!(block.contains("ID 5: Notes (rebelops/notes)"));
     }
