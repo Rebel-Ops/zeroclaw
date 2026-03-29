@@ -356,6 +356,13 @@ impl RebelOpsChannel {
             .unwrap_or_default()
     }
 
+    fn normalize_ai_marker(ai: Option<&str>) -> Option<String> {
+        match ai.map(str::trim) {
+            Some(value) if !value.is_empty() => Some(value.to_string()),
+            _ => None,
+        }
+    }
+
     fn normalize_inbound_message_text(
         &self,
         bot_user_id: &str,
@@ -1133,6 +1140,7 @@ impl Channel for RebelOpsChannel {
             .json(&serde_json::json!({
                 "message_text": outbound_text,
                 "supabase_user_id": session.user_id,
+                "ai": Self::normalize_ai_marker(message.subject.as_deref()),
                 "mentions": outbound_mentions,
             }))
             .send()
@@ -1402,6 +1410,16 @@ mod tests {
             "[ref:alpha-org.rebelops.app:chat_messages:77] Status update"
         );
         assert!(RebelOpsChannel::build_outbound_mentions(Some(&reply_context)).is_empty());
+    }
+
+    #[test]
+    fn normalize_ai_marker_trims_and_drops_empty_values() {
+        assert_eq!(
+            RebelOpsChannel::normalize_ai_marker(Some("  openai/gpt-5-mini  ")),
+            Some("openai/gpt-5-mini".to_string())
+        );
+        assert_eq!(RebelOpsChannel::normalize_ai_marker(Some("   ")), None);
+        assert_eq!(RebelOpsChannel::normalize_ai_marker(None), None);
     }
 
     #[test]

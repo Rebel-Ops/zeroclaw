@@ -3427,15 +3427,31 @@ async fn process_channel_message(
                         tracing::warn!("Failed to finalize draft: {e}; sending as new message");
                         let _ = channel
                             .send(
-                                &SendMessage::new(&delivered_response, &msg.reply_target)
-                                    .in_thread(msg.thread_ts.clone()),
+                                &if msg.channel == "rebelops" {
+                                    SendMessage::with_subject(
+                                        &delivered_response,
+                                        &msg.reply_target,
+                                        route.model.as_str(),
+                                    )
+                                } else {
+                                    SendMessage::new(&delivered_response, &msg.reply_target)
+                                }
+                                .in_thread(msg.thread_ts.clone()),
                             )
                             .await;
                     }
                 } else if let Err(e) = channel
                     .send(
-                        &SendMessage::new(&delivered_response, &msg.reply_target)
-                            .in_thread(msg.thread_ts.clone()),
+                        &if msg.channel == "rebelops" {
+                            SendMessage::with_subject(
+                                &delivered_response,
+                                &msg.reply_target,
+                                route.model.as_str(),
+                            )
+                        } else {
+                            SendMessage::new(&delivered_response, &msg.reply_target)
+                        }
+                        .in_thread(msg.thread_ts.clone()),
                     )
                     .await
                 {
