@@ -129,11 +129,7 @@ impl ParameterMapping {
 }
 
 impl RebelOpsBuiltInTool {
-    fn new(
-        spec: RebelOpsToolSpec,
-        security: Arc<SecurityPolicy>,
-        config: RebelOpsConfig,
-    ) -> Self {
+    fn new(spec: RebelOpsToolSpec, security: Arc<SecurityPolicy>, config: RebelOpsConfig) -> Self {
         Self {
             spec,
             security,
@@ -141,13 +137,12 @@ impl RebelOpsBuiltInTool {
         }
     }
 
-    pub fn all(
-        security: Arc<SecurityPolicy>,
-        config: RebelOpsConfig,
-    ) -> Vec<Arc<dyn Tool>> {
+    pub fn all(security: Arc<SecurityPolicy>, config: RebelOpsConfig) -> Vec<Arc<dyn Tool>> {
         all_specs()
             .into_iter()
-            .map(|spec| Arc::new(Self::new(spec, security.clone(), config.clone())) as Arc<dyn Tool>)
+            .map(|spec| {
+                Arc::new(Self::new(spec, security.clone(), config.clone())) as Arc<dyn Tool>
+            })
             .collect()
     }
 
@@ -223,12 +218,17 @@ impl RebelOpsBuiltInTool {
         Ok(resolved)
     }
 
-    fn build_path_suffix(&self, args: &Value, resolved_extension_id: Option<i64>) -> Result<String> {
+    fn build_path_suffix(
+        &self,
+        args: &Value,
+        resolved_extension_id: Option<i64>,
+    ) -> Result<String> {
         let mut path = self.spec.path_template.trim_start_matches('/').to_string();
 
         for mapping in &self.spec.path_params {
             let value = self.mapping_value(mapping, args, resolved_extension_id, true)?;
-            let value = value.ok_or_else(|| anyhow!("Missing required parameter '{}'", mapping.arg_name))?;
+            let value = value
+                .ok_or_else(|| anyhow!("Missing required parameter '{}'", mapping.arg_name))?;
             let replacement = path_segment_string(&value)
                 .ok_or_else(|| anyhow!("'{}' must be a string or integer", mapping.arg_name))?;
             path = path.replace(&format!(":{}", mapping.target_key), &replacement);
@@ -274,9 +274,15 @@ impl RebelOpsBuiltInTool {
 
         match mapping.transform {
             ValueTransform::Direct => Ok(find_arg(args, mapping.arg_name).cloned()),
-            ValueTransform::RequirementsArray => transform_requirements(find_arg(args, mapping.arg_name)),
-            ValueTransform::AssignmentsArray => transform_assignments(find_arg(args, mapping.arg_name)),
-            ValueTransform::CustomFieldsArray => transform_custom_fields(find_arg(args, mapping.arg_name)),
+            ValueTransform::RequirementsArray => {
+                transform_requirements(find_arg(args, mapping.arg_name))
+            }
+            ValueTransform::AssignmentsArray => {
+                transform_assignments(find_arg(args, mapping.arg_name))
+            }
+            ValueTransform::CustomFieldsArray => {
+                transform_custom_fields(find_arg(args, mapping.arg_name))
+            }
         }
     }
 }
@@ -323,21 +329,32 @@ impl RebelOpsBuiltInClient {
     }
 
     fn build_supabase_token_url(&self) -> Result<reqwest::Url> {
-        let mut url = reqwest::Url::parse(&self.config.supabase_url)
-            .with_context(|| format!("Invalid RebelOps supabase_url: {}", self.config.supabase_url))?;
+        let mut url = reqwest::Url::parse(&self.config.supabase_url).with_context(|| {
+            format!(
+                "Invalid RebelOps supabase_url: {}",
+                self.config.supabase_url
+            )
+        })?;
         url.set_path("/auth/v1/token");
         url.set_query(Some("grant_type=password"));
         Ok(url)
     }
 
     fn build_linked_organizations_url(&self) -> Result<reqwest::Url> {
-        let mut url = reqwest::Url::parse(&self.config.supabase_url)
-            .with_context(|| format!("Invalid RebelOps supabase_url: {}", self.config.supabase_url))?;
+        let mut url = reqwest::Url::parse(&self.config.supabase_url).with_context(|| {
+            format!(
+                "Invalid RebelOps supabase_url: {}",
+                self.config.supabase_url
+            )
+        })?;
         url.set_path("/rest/v1/account_linked_organizations");
         {
             let mut pairs = url.query_pairs_mut();
             pairs
-                .append_pair("select", "id,created_at,organization_id,organizations(id,slug,deleted_at,platform_url)")
+                .append_pair(
+                    "select",
+                    "id,created_at,organization_id,organizations(id,slug,deleted_at,platform_url)",
+                )
                 .append_pair("order", "created_at.asc");
         }
         Ok(url)
@@ -386,7 +403,10 @@ impl RebelOpsBuiltInClient {
             .post(self.build_supabase_token_url()?)
             .header("content-type", "application/json")
             .header("apikey", self.config.supabase_anon_key.clone())
-            .header("authorization", format!("Bearer {}", self.config.supabase_anon_key))
+            .header(
+                "authorization",
+                format!("Bearer {}", self.config.supabase_anon_key),
+            )
             .timeout(self.timeout())
             .json(&json!({ "email": username, "password": password }))
             .send()
@@ -394,7 +414,10 @@ impl RebelOpsBuiltInClient {
             .context("Failed to sign in to RebelOps via Supabase")?;
 
         if !response.status().is_success() {
-            bail!("RebelOps sign-in failed: {}", read_json_error_body(response).await);
+            bail!(
+                "RebelOps sign-in failed: {}",
+                read_json_error_body(response).await
+            );
         }
 
         let payload: SupabasePasswordGrantResponse = response
@@ -447,7 +470,10 @@ impl RebelOpsBuiltInClient {
                 if slug.is_empty() || organization_url.is_empty() {
                     return None;
                 }
-                Some(LinkedOrganization { slug, organization_url })
+                Some(LinkedOrganization {
+                    slug,
+                    organization_url,
+                })
             })
             .collect::<Vec<_>>();
 
@@ -476,7 +502,10 @@ impl RebelOpsBuiltInClient {
                     format!("RebelOps organization '{slug}' is not linked to this bot account")
                 })?
         } else if organizations.len() == 1 {
-            organizations.into_iter().next().expect("single organization")
+            organizations
+                .into_iter()
+                .next()
+                .expect("single organization")
         } else {
             let available = organizations
                 .iter()
@@ -519,8 +548,14 @@ impl RebelOpsBuiltInClient {
             .and_then(|extensions| {
                 extensions.iter().find_map(|entry| {
                     let manifest = entry.get("manifest")?.as_object()?;
-                    let source = manifest.get("source").and_then(Value::as_str).unwrap_or_default();
-                    let kind = manifest.get("type").and_then(Value::as_str).unwrap_or_default();
+                    let source = manifest
+                        .get("source")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let kind = manifest
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
                     if source_identifier
                         .is_some_and(|needle| source.contains(needle) || kind.contains(needle))
                     {
@@ -568,7 +603,8 @@ impl RebelOpsBuiltInClient {
             _ => self.resolve_organization(None).await?,
         };
 
-        let mut url = self.build_organization_api_url(&organization.organization_url, path_suffix)?;
+        let mut url =
+            self.build_organization_api_url(&organization.organization_url, path_suffix)?;
         if let Some(query) = query.as_ref() {
             let mut pairs = url.query_pairs_mut();
             for (key, value) in query {
@@ -591,7 +627,10 @@ impl RebelOpsBuiltInClient {
         }
 
         let response = request.send().await.with_context(|| {
-            format!("Failed to call RebelOps endpoint '{}': {}", method, path_suffix)
+            format!(
+                "Failed to call RebelOps endpoint '{}': {}",
+                method, path_suffix
+            )
         })?;
 
         if !response.status().is_success() {
@@ -650,14 +689,20 @@ fn optional_i64_arg(args: &Value, name: &str) -> Result<Option<i64>> {
     let Some(value) = find_arg(args, name) else {
         return Ok(None);
     };
-    value_as_i64(value).ok_or_else(|| anyhow!("'{name}' must be an integer")).map(Some)
+    value_as_i64(value)
+        .ok_or_else(|| anyhow!("'{name}' must be an integer"))
+        .map(Some)
 }
 
 fn value_as_i64(value: &Value) -> Option<i64> {
     value
         .as_i64()
         .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
-        .or_else(|| value.as_str().and_then(|text| text.trim().parse::<i64>().ok()))
+        .or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<i64>().ok())
+        })
 }
 
 fn path_segment_string(value: &Value) -> Option<String> {
@@ -752,7 +797,9 @@ fn transform_custom_fields(value: Option<&Value>) -> Result<Option<Value>> {
         let custom_field_id = find_object_value(object, "customFieldId")
             .or_else(|| find_object_value(object, "custom_field_id"))
             .and_then(value_as_i64)
-            .ok_or_else(|| anyhow!("Each customFields entry must include an integer customFieldId"))?;
+            .ok_or_else(|| {
+                anyhow!("Each customFields entry must include an integer customFieldId")
+            })?;
         let mut payload = Map::new();
         payload.insert("custom_field_id".to_string(), json!(custom_field_id));
         if let Some(value) = find_object_value(object, "value").cloned() {
@@ -1009,10 +1056,16 @@ fn calendar_specs() -> Vec<RebelOpsToolSpec> {
                     ("title", string_prop("Event title")),
                     ("titleEncrypted", string_prop("Encrypted event title")),
                     ("description", string_prop("Event description")),
-                    ("descriptionEncrypted", string_prop("Encrypted event description")),
+                    (
+                        "descriptionEncrypted",
+                        string_prop("Encrypted event description"),
+                    ),
                     ("startTime", datetime_prop("Event start time")),
                     ("endTime", datetime_prop("Event end time")),
-                    ("assignees", string_array_prop("Supabase user IDs to assign")),
+                    (
+                        "assignees",
+                        string_array_prop("Supabase user IDs to assign"),
+                    ),
                 ],
                 &["projectId", "startTime", "endTime"],
                 None,
@@ -1071,7 +1124,11 @@ fn calendar_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_delete_calendar_event",
             "Delete a RebelOps calendar event.",
             ToolOperation::Act,
-            schema(vec![("eventId", integer_prop("Event ID"))], &["eventId"], None),
+            schema(
+                vec![("eventId", integer_prop("Event ID"))],
+                &["eventId"],
+                None,
+            ),
             Method::DELETE,
             "calendar/events/:eventId",
             Some("rebelops/calendar"),
@@ -1171,7 +1228,10 @@ fn tasks_specs() -> Vec<RebelOpsToolSpec> {
                     ("title", string_prop("Task title")),
                     ("titleEncrypted", string_prop("Encrypted task title")),
                     ("description", string_prop("Task description")),
-                    ("descriptionEncrypted", string_prop("Encrypted task description")),
+                    (
+                        "descriptionEncrypted",
+                        string_prop("Encrypted task description"),
+                    ),
                     ("priority", string_prop("Task priority")),
                     ("dueDate", datetime_prop("Due date")),
                     ("tags", string_array_prop("Tags")),
@@ -1342,7 +1402,11 @@ fn decisions_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_get_decision",
             "Fetch a single RebelOps decision.",
             ToolOperation::Read,
-            schema(vec![("decisionId", integer_prop("Decision ID"))], &["decisionId"], None),
+            schema(
+                vec![("decisionId", integer_prop("Decision ID"))],
+                &["decisionId"],
+                None,
+            ),
             Method::GET,
             "decisions/:decisionId",
             Some("rebelops/decisions"),
@@ -1380,7 +1444,10 @@ fn decisions_specs() -> Vec<RebelOpsToolSpec> {
                     ("title", string_prop("Decision title")),
                     ("titleEncrypted", string_prop("Encrypted decision title")),
                     ("description", string_prop("Decision description")),
-                    ("descriptionEncrypted", string_prop("Encrypted decision description")),
+                    (
+                        "descriptionEncrypted",
+                        string_prop("Encrypted decision description"),
+                    ),
                 ],
                 &["extensionId"],
                 None,
@@ -1430,7 +1497,11 @@ fn decisions_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_delete_decision",
             "Delete a RebelOps decision.",
             ToolOperation::Act,
-            schema(vec![("decisionId", integer_prop("Decision ID"))], &["decisionId"], None),
+            schema(
+                vec![("decisionId", integer_prop("Decision ID"))],
+                &["decisionId"],
+                None,
+            ),
             Method::DELETE,
             "decisions/:decisionId",
             Some("rebelops/decisions"),
@@ -1469,7 +1540,11 @@ fn news_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_get_news_post",
             "Fetch a single RebelOps news post.",
             ToolOperation::Read,
-            schema(vec![("newsId", integer_prop("News post ID"))], &["newsId"], None),
+            schema(
+                vec![("newsId", integer_prop("News post ID"))],
+                &["newsId"],
+                None,
+            ),
             Method::GET,
             "news/:newsId",
             Some("rebelops/news"),
@@ -1580,7 +1655,11 @@ fn news_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_delete_news_post",
             "Delete a RebelOps news post.",
             ToolOperation::Act,
-            schema(vec![("newsId", integer_prop("News post ID"))], &["newsId"], None),
+            schema(
+                vec![("newsId", integer_prop("News post ID"))],
+                &["newsId"],
+                None,
+            ),
             Method::DELETE,
             "news/:newsId",
             Some("rebelops/news"),
@@ -1665,11 +1744,17 @@ fn git_repository_specs() -> Vec<RebelOpsToolSpec> {
                     ("provider", string_prop("Provider")),
                     ("providerEncrypted", string_prop("Encrypted provider")),
                     ("repositoryUrl", string_prop("Repository URL")),
-                    ("repositoryUrlEncrypted", string_prop("Encrypted repository URL")),
+                    (
+                        "repositoryUrlEncrypted",
+                        string_prop("Encrypted repository URL"),
+                    ),
                     ("apiBaseUrl", string_prop("API base URL")),
                     ("apiBaseUrlEncrypted", string_prop("Encrypted API base URL")),
                     ("accessToken", string_prop("Access token")),
-                    ("accessTokenEncrypted", string_prop("Encrypted access token")),
+                    (
+                        "accessTokenEncrypted",
+                        string_prop("Encrypted access token"),
+                    ),
                 ],
                 &["extensionId", "projectId"],
                 None,
@@ -1728,7 +1813,11 @@ fn crm_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_get_crm_profile",
             "Fetch a single RebelOps CRM profile.",
             ToolOperation::Read,
-            schema(vec![("profileId", integer_prop("CRM profile ID"))], &["profileId"], None),
+            schema(
+                vec![("profileId", integer_prop("CRM profile ID"))],
+                &["profileId"],
+                None,
+            ),
             Method::GET,
             "crm/profiles/:profileId",
             Some("rebelops/crm"),
@@ -1751,7 +1840,10 @@ fn crm_specs() -> Vec<RebelOpsToolSpec> {
                     ("phone", string_prop("Phone")),
                     ("phoneEncrypted", string_prop("Encrypted phone")),
                     ("organization", string_prop("Organization")),
-                    ("organizationEncrypted", string_prop("Encrypted organization")),
+                    (
+                        "organizationEncrypted",
+                        string_prop("Encrypted organization"),
+                    ),
                     ("notes", string_prop("Notes")),
                     ("notesEncrypted", string_prop("Encrypted notes")),
                     ("avatarFileId", string_prop("Avatar file ID")),
@@ -1800,7 +1892,10 @@ fn crm_specs() -> Vec<RebelOpsToolSpec> {
                     ("phone", string_prop("Phone")),
                     ("phoneEncrypted", string_prop("Encrypted phone")),
                     ("organization", string_prop("Organization")),
-                    ("organizationEncrypted", string_prop("Encrypted organization")),
+                    (
+                        "organizationEncrypted",
+                        string_prop("Encrypted organization"),
+                    ),
                     ("notes", string_prop("Notes")),
                     ("notesEncrypted", string_prop("Encrypted notes")),
                     ("avatarFileId", string_prop("Avatar file ID")),
@@ -1837,7 +1932,11 @@ fn crm_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_delete_crm_profile",
             "Delete a RebelOps CRM profile.",
             ToolOperation::Act,
-            schema(vec![("profileId", integer_prop("CRM profile ID"))], &["profileId"], None),
+            schema(
+                vec![("profileId", integer_prop("CRM profile ID"))],
+                &["profileId"],
+                None,
+            ),
             Method::DELETE,
             "crm/profiles/:profileId",
             Some("rebelops/crm"),
@@ -2023,7 +2122,11 @@ fn crm_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_delete_crm_custom_field",
             "Delete a RebelOps CRM custom field.",
             ToolOperation::Act,
-            schema(vec![("customFieldId", integer_prop("Custom field ID"))], &["customFieldId"], None),
+            schema(
+                vec![("customFieldId", integer_prop("Custom field ID"))],
+                &["customFieldId"],
+                None,
+            ),
             Method::DELETE,
             "crm/custom-fields/:customFieldId",
             Some("rebelops/crm"),
@@ -2035,7 +2138,11 @@ fn crm_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_list_crm_profile_files",
             "List files attached to a RebelOps CRM profile.",
             ToolOperation::Read,
-            schema(vec![("profileId", integer_prop("CRM profile ID"))], &["profileId"], None),
+            schema(
+                vec![("profileId", integer_prop("CRM profile ID"))],
+                &["profileId"],
+                None,
+            ),
             Method::GET,
             "crm/profiles/:profileId/files",
             Some("rebelops/crm"),
@@ -2128,7 +2235,10 @@ fn shifts_specs() -> Vec<RebelOpsToolSpec> {
                     ("title", string_prop("Shift title")),
                     ("titleEncrypted", string_prop("Encrypted shift title")),
                     ("description", string_prop("Shift description")),
-                    ("descriptionEncrypted", string_prop("Encrypted shift description")),
+                    (
+                        "descriptionEncrypted",
+                        string_prop("Encrypted shift description"),
+                    ),
                     ("startTime", datetime_prop("Start time")),
                     ("endTime", datetime_prop("End time")),
                     ("requirements", requirements_prop()),
@@ -2157,7 +2267,11 @@ fn shifts_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_delete_shift",
             "Delete a RebelOps shift.",
             ToolOperation::Act,
-            schema(vec![("shiftId", integer_prop("Shift ID"))], &["shiftId"], None),
+            schema(
+                vec![("shiftId", integer_prop("Shift ID"))],
+                &["shiftId"],
+                None,
+            ),
             Method::DELETE,
             "shifts/:shiftId",
             Some("rebelops/shifts"),
@@ -2169,7 +2283,11 @@ fn shifts_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_list_shift_requirements",
             "List staffing requirements for a RebelOps shift.",
             ToolOperation::Read,
-            schema(vec![("shiftId", integer_prop("Shift ID"))], &["shiftId"], None),
+            schema(
+                vec![("shiftId", integer_prop("Shift ID"))],
+                &["shiftId"],
+                None,
+            ),
             Method::GET,
             "shifts/:shiftId/requirements",
             Some("rebelops/shifts"),
@@ -2194,13 +2312,20 @@ fn shifts_specs() -> Vec<RebelOpsToolSpec> {
             Some("rebelops/shifts"),
             vec![ParameterMapping::direct("shiftId", "shiftId")],
             vec![],
-            vec![ParameterMapping::requirements("requirements", "requirements")],
+            vec![ParameterMapping::requirements(
+                "requirements",
+                "requirements",
+            )],
         ),
         tool_spec(
             "rebelops_list_staff_roles",
             "List RebelOps staff roles.",
             ToolOperation::Read,
-            schema(vec![("projectId", integer_prop("Project ID"))], &["projectId"], None),
+            schema(
+                vec![("projectId", integer_prop("Project ID"))],
+                &["projectId"],
+                None,
+            ),
             Method::GET,
             "staff-roles",
             Some("rebelops/shifts"),
@@ -2373,7 +2498,11 @@ fn shifts_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_create_shift_assignments",
             "Create RebelOps shift assignments.",
             ToolOperation::Act,
-            schema(vec![("assignments", assignments_prop())], &["assignments"], None),
+            schema(
+                vec![("assignments", assignments_prop())],
+                &["assignments"],
+                None,
+            ),
             Method::POST,
             "assignments",
             Some("rebelops/shifts"),
@@ -2385,7 +2514,11 @@ fn shifts_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_delete_shift_assignment",
             "Delete a RebelOps shift assignment.",
             ToolOperation::Act,
-            schema(vec![("assignmentId", integer_prop("Assignment ID"))], &["assignmentId"], None),
+            schema(
+                vec![("assignmentId", integer_prop("Assignment ID"))],
+                &["assignmentId"],
+                None,
+            ),
             Method::DELETE,
             "assignments/:assignmentId",
             Some("rebelops/shifts"),
@@ -2456,7 +2589,11 @@ fn shifts_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_delete_shift_absence",
             "Delete a RebelOps shift absence.",
             ToolOperation::Act,
-            schema(vec![("absenceId", integer_prop("Absence ID"))], &["absenceId"], None),
+            schema(
+                vec![("absenceId", integer_prop("Absence ID"))],
+                &["absenceId"],
+                None,
+            ),
             Method::DELETE,
             "absences/:absenceId",
             Some("rebelops/shifts"),
@@ -2566,7 +2703,11 @@ fn time_tracking_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_get_active_time_session",
             "Get the active RebelOps time-tracking session.",
             ToolOperation::Read,
-            schema(vec![("extensionId", integer_prop("Time tracking extension ID"))], &[], None),
+            schema(
+                vec![("extensionId", integer_prop("Time tracking extension ID"))],
+                &[],
+                None,
+            ),
             Method::GET,
             "time-tracking/sessions/active",
             Some("rebelops/time-tracking"),
@@ -2628,7 +2769,11 @@ fn time_tracking_specs() -> Vec<RebelOpsToolSpec> {
             "rebelops_list_recent_time_activities",
             "List recent RebelOps time-tracking activities.",
             ToolOperation::Read,
-            schema(vec![("limit", integer_prop("Maximum activities to return"))], &[], None),
+            schema(
+                vec![("limit", integer_prop("Maximum activities to return"))],
+                &[],
+                None,
+            ),
             Method::GET,
             "time-tracking/activities/recent",
             Some("rebelops/time-tracking"),

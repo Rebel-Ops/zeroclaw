@@ -1047,8 +1047,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool =
-            RebelOpsNotesTool::list_project(test_security(), rebelops_config(&server.uri()));
+        let tool = RebelOpsNotesTool::list_project(test_security(), rebelops_config(&server.uri()));
         let result = tool.execute(json!({ "projectId": 77 })).await.unwrap();
 
         assert!(result.success);
@@ -1111,10 +1110,8 @@ mod tests {
 
     #[test]
     fn create_note_schema_requires_description_payload() {
-        let tool = RebelOpsNotesTool::create(
-            test_security(),
-            rebelops_config("https://example.com"),
-        );
+        let tool =
+            RebelOpsNotesTool::create(test_security(), rebelops_config("https://example.com"));
 
         let schema = tool.parameters_schema();
         assert_eq!(

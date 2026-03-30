@@ -499,10 +499,7 @@ pub fn all_tools_with_runtime(
     }
 
     if let Some(rebelops) = root_config.channels_config.rebelops.clone() {
-        tool_arcs.extend(RebelOpsBuiltInTool::all(
-            security.clone(),
-            rebelops.clone(),
-        ));
+        tool_arcs.extend(RebelOpsBuiltInTool::all(security.clone(), rebelops.clone()));
         tool_arcs.push(Arc::new(RebelOpsNotesTool::get(
             security.clone(),
             rebelops.clone(),
