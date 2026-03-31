@@ -725,7 +725,32 @@ struct RebelOpsPromptResolvedContext {
     organization_role: Option<String>,
     project_role: Option<String>,
     project_name: Option<String>,
+    project_description: Option<String>,
     extension_mappings: Vec<String>,
+    recent_project_messages: Vec<RebelOpsPromptProjectChatMessage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RebelOpsPromptProjectMessagesResponse {
+    #[serde(default)]
+    messages: Vec<RebelOpsPromptProjectMessage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RebelOpsPromptProjectMessage {
+    message_text: Option<String>,
+    message_text_encrypted: Option<String>,
+    message_type: Option<String>,
+    event_type: Option<String>,
+    ai: Option<String>,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RebelOpsPromptProjectChatMessage {
+    speaker: String,
+    summary: String,
+    created_at: Option<String>,
 }
 
 fn parse_rebelops_prompt_target(reply_target: &str) -> Option<(String, String)> {
@@ -788,6 +813,17 @@ fn build_rebelops_prompt_context_block(context: &RebelOpsPromptResolvedContext) 
         lines.push(format!("- Current project name: {project_name}"));
     }
 
+    if let Some(project_description) = context
+        .project_description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!(
+            "- Current project description: {project_description}"
+        ));
+    }
+
     if let Some(organization_role) = context
         .organization_role
         .as_deref()
@@ -834,7 +870,88 @@ fn build_rebelops_prompt_context_block(context: &RebelOpsPromptResolvedContext) 
         );
     }
 
+    if !context.recent_project_messages.is_empty() {
+        lines.push(format!(
+            "- Recent RebelOps project chat history before the current message (showing latest {} messages):",
+            context.recent_project_messages.len()
+        ));
+        lines.extend(context.recent_project_messages.iter().map(|message| {
+            let timestamp = message.created_at.as_deref().unwrap_or("unknown-time");
+            format!("  - [{timestamp}] {}: {}", message.speaker, message.summary)
+        }));
+    }
+
     lines.join("\n")
+}
+
+fn normalize_rebelops_prompt_message_text(text: &str) -> Option<String> {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn summarize_rebelops_project_message(
+    message: RebelOpsPromptProjectMessage,
+) -> Option<RebelOpsPromptProjectChatMessage> {
+    let message_type = message
+        .message_type
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    let event_type = message
+        .event_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let ai_label = message
+        .ai
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let speaker =
+        if event_type.is_some() || (!message_type.is_empty() && message_type != "user_message") {
+            event_type.unwrap_or("event").to_string()
+        } else if ai_label.is_some() {
+            "assistant".to_string()
+        } else {
+            "user".to_string()
+        };
+
+    let mut summary = if let Some(content) = message
+        .message_text
+        .as_deref()
+        .and_then(normalize_rebelops_prompt_message_text)
+    {
+        content
+    } else if message
+        .message_text_encrypted
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        "[encrypted chat message stored in RebelOps]".to_string()
+    } else {
+        String::new()
+    };
+
+    if summary.is_empty() {
+        return None;
+    }
+
+    if summary.chars().count() > 280 {
+        summary = summary.chars().take(277).collect::<String>() + "...";
+    }
+
+    Some(RebelOpsPromptProjectChatMessage {
+        speaker,
+        summary,
+        created_at: message.created_at,
+    })
 }
 
 fn rebelops_prompt_api_base_path(config: &crate::config::schema::RebelOpsConfig) -> String {
@@ -848,6 +965,7 @@ fn rebelops_prompt_api_base_path(config: &crate::config::schema::RebelOpsConfig)
 async fn build_rebelops_prompt_context(
     prompt_config: &crate::config::Config,
     reply_target: &str,
+    current_message_content: &str,
 ) -> Option<String> {
     let Some(rebelops) = prompt_config.channels_config.rebelops.as_ref() else {
         return rebelops_prompt_context_fallback(reply_target);
@@ -952,6 +1070,12 @@ async fn build_rebelops_prompt_context(
     projects_url
         .query_pairs_mut()
         .append_pair("ids", &project_id);
+    let mut project_messages_url = reqwest::Url::parse(&organization_url).ok()?;
+    project_messages_url.set_path(&format!("{api_base_path}/projects/{project_id}/messages"));
+    project_messages_url
+        .query_pairs_mut()
+        .append_pair("limit", "6")
+        .append_pair("offset", "0");
 
     let extensions_response = client
         .get(extensions_url)
@@ -969,6 +1093,14 @@ async fn build_rebelops_prompt_context(
         .send()
         .await
         .ok();
+    let project_messages_response = client
+        .get(project_messages_url)
+        .header("authorization", format!("Bearer {access_token}"))
+        .header("content-type", "application/json")
+        .timeout(timeout)
+        .send()
+        .await
+        .ok();
 
     let mut context = RebelOpsPromptResolvedContext {
         organization_slug,
@@ -976,7 +1108,9 @@ async fn build_rebelops_prompt_context(
         organization_role: None,
         project_role: None,
         project_name: None,
+        project_description: None,
         extension_mappings: Vec::new(),
+        recent_project_messages: Vec::new(),
     };
 
     if let Some(response) = extensions_response {
@@ -1021,6 +1155,22 @@ async fn build_rebelops_prompt_context(
                         .get("name")
                         .and_then(Value::as_str)
                         .map(ToOwned::to_owned);
+                    context.project_description = project
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned)
+                        .or_else(|| {
+                            project
+                                .get("description_encrypted")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(|_| {
+                                    "[encrypted project description stored in RebelOps]".to_string()
+                                })
+                        });
 
                     let supervisor_ids = project
                         .get("supervisor_supabase_ids")
@@ -1046,6 +1196,41 @@ async fn build_rebelops_prompt_context(
                         None
                     };
                 }
+            }
+        }
+    }
+
+    if let Some(response) = project_messages_response {
+        if response.status().is_success() {
+            if let Ok(payload) = response
+                .json::<RebelOpsPromptProjectMessagesResponse>()
+                .await
+            {
+                let current_message =
+                    normalize_rebelops_prompt_message_text(current_message_content);
+                let mut skipped_current_message = current_message.is_none();
+                context.recent_project_messages = payload
+                    .messages
+                    .into_iter()
+                    .filter_map(|message| {
+                        let comparable_text = message
+                            .message_text
+                            .as_deref()
+                            .and_then(normalize_rebelops_prompt_message_text);
+
+                        if !skipped_current_message && comparable_text == current_message {
+                            skipped_current_message = true;
+                            None
+                        } else {
+                            Some(message)
+                        }
+                    })
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .filter_map(summarize_rebelops_project_message)
+                    .collect();
             }
         }
     }
@@ -2945,8 +3130,12 @@ async fn process_channel_message(
     let mut system_prompt =
         build_channel_system_prompt(&base_system_prompt, &msg.channel, &msg.reply_target);
     if canonical_channel_name(&msg.channel) == "rebelops" {
-        if let Some(rebelops_context) =
-            build_rebelops_prompt_context(ctx.prompt_config.as_ref(), &msg.reply_target).await
+        if let Some(rebelops_context) = build_rebelops_prompt_context(
+            ctx.prompt_config.as_ref(),
+            &msg.reply_target,
+            &msg.content,
+        )
+        .await
         {
             system_prompt.push_str(&rebelops_context);
         }
@@ -11001,7 +11190,15 @@ This is an example JSON object for profile settings."#;
             organization_role: Some("chief".to_string()),
             project_role: Some("elevated via organization role".to_string()),
             project_name: Some("Ops".to_string()),
+            project_description: Some(
+                "Coordinate rollout planning and field execution".to_string(),
+            ),
             extension_mappings: vec!["ID 5: Notes (rebelops/notes)".to_string()],
+            recent_project_messages: vec![RebelOpsPromptProjectChatMessage {
+                speaker: "user".to_string(),
+                summary: "Need a short rollout summary".to_string(),
+                created_at: Some("2026-03-31T18:00:00Z".to_string()),
+            }],
         });
 
         assert!(block.contains("Current organization slug: alpha"));
@@ -11009,7 +11206,12 @@ This is an example JSON object for profile settings."#;
         assert!(block.contains("Default to the current project ID 77"));
         assert!(block.contains("RebelOps tool names are prefixed with rebelops_."));
         assert!(block.contains("Bot organization role: chief"));
+        assert!(block.contains(
+            "Current project description: Coordinate rollout planning and field execution"
+        ));
         assert!(block.contains("ID 5: Notes (rebelops/notes)"));
+        assert!(block.contains("Recent RebelOps project chat history before the current message"));
+        assert!(block.contains("Need a short rollout summary"));
     }
 
     #[tokio::test]

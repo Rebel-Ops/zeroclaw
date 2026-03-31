@@ -5269,6 +5269,7 @@ fn default_auto_approve() -> Vec<String> {
         "image_info".into(),
         "weather".into(),
         "rebelops_get_note".into(),
+        "rebelops_get_project_chat_history".into(),
         "rebelops_list_project_notes".into(),
         "rebelops_create_note".into(),
         "rebelops_update_note".into(),

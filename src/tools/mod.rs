@@ -84,6 +84,7 @@ pub mod proxy_config;
 pub mod pushover;
 pub mod reaction;
 pub mod read_skill;
+pub mod rebelops_ai_conversation;
 pub mod rebelops_builtin_tools;
 pub mod rebelops_notes;
 pub mod report_templates;
@@ -179,6 +180,7 @@ pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
 pub use reaction::ReactionTool;
 pub use read_skill::ReadSkillTool;
+pub use rebelops_ai_conversation::RebelOpsAiConversationTool;
 pub use rebelops_builtin_tools::RebelOpsBuiltInTool;
 pub use rebelops_notes::RebelOpsNotesTool;
 pub use schedule::ScheduleTool;
@@ -500,6 +502,10 @@ pub fn all_tools_with_runtime(
 
     if let Some(rebelops) = root_config.channels_config.rebelops.clone() {
         tool_arcs.extend(RebelOpsBuiltInTool::all(security.clone(), rebelops.clone()));
+        tool_arcs.push(Arc::new(RebelOpsAiConversationTool::new(
+            security.clone(),
+            rebelops.clone(),
+        )));
         tool_arcs.push(Arc::new(RebelOpsNotesTool::get(
             security.clone(),
             rebelops.clone(),

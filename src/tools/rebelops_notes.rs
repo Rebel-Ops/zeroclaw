@@ -976,6 +976,7 @@ fn query_value_to_string(value: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use crate::security::{AutonomyLevel, SecurityPolicy};
+    use reqwest::StatusCode;
     use wiremock::matchers::{body_partial_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
